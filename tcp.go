@@ -3,11 +3,9 @@ package main
 import (
 	"bufio"
 	"errors"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"sync"
@@ -17,90 +15,6 @@ import (
 
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
-
-// httpProxy is a HTTP/HTTPS connect proxy.
-type httpProxy struct {
-	host     string
-	haveAuth bool
-	username string
-	password string
-	forward  proxy.Dialer
-}
-
-func newHTTPProxy(uri *url.URL, forward proxy.Dialer) (proxy.Dialer, error) {
-	s := new(httpProxy)
-	s.host = uri.Host
-	s.forward = forward
-	if uri.User != nil {
-		s.haveAuth = true
-		s.username = uri.User.Username()
-		s.password, _ = uri.User.Password()
-	}
-	return s, nil
-}
-
-func (s *httpProxy) Dial(network, addr string) (net.Conn, error) {
-	// Dial and create the https client connection.
-	c, err := s.forward.Dial("tcp", s.host)
-	if err != nil {
-		return nil, err
-	}
-
-	// HACK. http.ReadRequest also does this.
-	reqURL, err := url.Parse("http://" + addr)
-	if err != nil {
-		c.Close()
-		return nil, err
-	}
-	reqURL.Scheme = ""
-
-	req, err := http.NewRequest("CONNECT", reqURL.String(), nil)
-	if err != nil {
-		c.Close()
-		return nil, err
-	}
-	req.Close = false
-	if s.haveAuth {
-		req.SetBasicAuth(s.username, s.password)
-	}
-	req.Header.Set("User-Agent", "Powerby Gota")
-
-	err = req.Write(c)
-	if err != nil {
-		c.Close()
-		return nil, err
-	}
-
-	resp, err := http.ReadResponse(bufio.NewReader(c), req)
-	if err != nil {
-		// TODO close resp body ?
-		resp.Body.Close()
-		c.Close()
-		return nil, err
-	}
-	resp.Body.Close()
-	if resp.StatusCode != 200 {
-		c.Close()
-		err = fmt.Errorf("Connect server using proxy error, StatusCode [%d]", resp.StatusCode)
-		return nil, err
-	}
-
-	return c, nil
-}
-
-func init() {
-	proxy.RegisterDialerType("http", newHTTPProxy)
-	proxy.RegisterDialerType("https", newHTTPProxy)
-}
-
-type direct struct{}
-
-// Direct is a direct proxy: one that makes network connections directly.
-var Direct = direct{}
-
-func (direct) Dial(network, addr string) (net.Conn, error) {
-	return net.Dial(network, addr)
-}
 
 // Create a SOCKS server listening on addr and proxy to server.
 func socksLocal(addr, server string, shadow func(net.Conn) net.Conn) {
@@ -218,24 +132,26 @@ func tcpRemote(addr string, proxyUrl string, shadow func(net.Conn) net.Conn) {
 
 			var rc net.Conn = nil
 			if proxyUrl == "" {
+				logf("proxy %s <-> %s", c.RemoteAddr(), tgt)
 				rc, err = net.Dial("tcp", tgt.String())
 				if err != nil {
 					logf("failed to connect to server %v: %v", tgt.String(), err)
 					return
 				}
 			} else {
+				logf("create connection with proxy %s", proxyUrl)
 				// https://gist.github.com/jim3ma/3750675f141669ac4702bc9deaf31c6b
-				httpProxyURI, err := url.Parse(proxyUrl)
+				proxyURI, err := url.Parse(proxyUrl)
 				if err != nil {
-					logf("failed to create httpDialer from httpProxyURL, %v", err)
+					logf("failed to parse url with URL %s,%v ", proxyUrl, err)
 					return
 				}
-				httpDialer, err := proxy.FromURL(httpProxyURI, Direct)
+				dialer, err := proxy.FromURL(proxyURI, proxy.Direct)
 				if err != nil {
-					logf("failed to create httpDialer from httpProxyURL, %v", err)
+					logf("failed to create dialer from proxyURL, %v", err)
 					return
 				}
-				rc, err = httpDialer.Dial("tcp", tgt.String())
+				rc, err = dialer.Dial("tcp", tgt.String())
 				if err != nil {
 					logf("failed to connect to server %v: %v", tgt.String(), err)
 					return
