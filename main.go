@@ -43,10 +43,11 @@ func main() {
 		TCP        bool
 		Plugin     string
 		PluginOpts string
+		ProxyUrl   string
 	}
 
 	flag.BoolVar(&config.Verbose, "verbose", false, "verbose mode")
-	flag.StringVar(&flags.Cipher, "cipher", "AEAD_CHACHA20_POLY1305", "available ciphers: "+strings.Join(core.ListCipher(), " "))
+	flag.StringVar(&flags.Cipher, "cipher", "CHACHA20-IETF-POLY1305", "available ciphers: "+strings.Join(core.ListCipher(), " "))
 	flag.StringVar(&flags.Key, "key", "", "base64url-encoded key (derive from password if empty)")
 	flag.IntVar(&flags.Keygen, "keygen", 0, "generate a base64url-encoded random key of given length in byte")
 	flag.StringVar(&flags.Password, "password", "", "password")
@@ -64,6 +65,7 @@ func main() {
 	flag.BoolVar(&flags.TCP, "tcp", true, "(server-only) enable TCP support")
 	flag.BoolVar(&config.TCPCork, "tcpcork", false, "coalesce writing first few packets")
 	flag.DurationVar(&config.UDPTimeout, "udptimeout", 5*time.Minute, "UDP tunnel timeout")
+	flag.StringVar(&flags.ProxyUrl, "proxyurl", "", "http proxy url")
 	flag.Parse()
 
 	if flags.Keygen > 0 {
@@ -149,6 +151,7 @@ func main() {
 		addr := flags.Server
 		cipher := flags.Cipher
 		password := flags.Password
+		proxyUrl := flags.ProxyUrl
 		var err error
 
 		if strings.HasPrefix(addr, "ss://") {
@@ -176,7 +179,7 @@ func main() {
 			go udpRemote(udpAddr, ciph.PacketConn)
 		}
 		if flags.TCP {
-			go tcpRemote(addr, ciph.StreamConn)
+			go tcpRemote(addr, proxyUrl, ciph.StreamConn)
 		}
 	}
 
